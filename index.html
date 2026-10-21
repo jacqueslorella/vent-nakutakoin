@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vent Nakutakoin</title>
+<meta name="description" content="Vent en temps réel à Nakutakoin, Dumbéa : vitesse, rafales, direction et historique. Données Météo-France.">
+<meta name="theme-color" content="#00798c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Vent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira+Extra+Condensed:wght@600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Mise en page : un bandeau d'état, un instrument (vitesse, rafales, boussole), le graphique, puis les mesures annexes. */
+  :root {
+    --bg: #e8f0ee;
+    --surface: #f6faf9;
+    --ink: #0c2a33;
+    --muted: #4b6970;
+    --line: #c6d9d6;
+    --wind: #00798c;
+    --gust: #c0391b;
+    --ok: #1b7f4b;
+    --warn: #a15c00;
+    --bad: #b42318;
+    --font-display: "Saira Extra Condensed", "Arial Narrow", "Helvetica Neue", sans-serif;
+    --font-body: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #08181d;
+      --surface: #0f272e;
+      --ink: #e4f1f0;
+      --muted: #8fb0b3;
+      --line: #1f3e45;
+      --wind: #43c3d8;
+      --gust: #ff8a65;
+      --ok: #4cc58a;
+      --warn: #f0b24a;
+      --bad: #ff8478;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 var(--font-body);
+    padding-inline: max(16px, env(safe-area-inset-left));
+    padding-block: max(20px, env(safe-area-inset-top)) max(40px, env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 1040px; margin-inline: auto; display: grid; gap: 16px; }
+  .wrap > * { min-width: 0; }
+
+  /* Bandeau */
+  header { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: end; justify-content: space-between; }
+  h1 { margin: 0; font: 700 clamp(34px, 7vw, 52px)/0.95 var(--font-display); letter-spacing: .01em; text-transform: uppercase; text-wrap: balance; }
+  .where { margin: 6px 0 0; color: var(--muted); font: 13px var(--font-mono); }
+  .status { display: inline-flex; align-items: center; gap: 8px; font: 13px var(--font-mono); padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .status[data-state="fresh"] .dot { background: var(--ok); }
+  .status[data-state="late"] .dot { background: var(--warn); }
+  .status[data-state="old"] .dot { background: var(--bad); }
+
+  .banner { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 6px; padding: 10px 14px; background: var(--surface); font-size: 14px; }
+  .banner[hidden] { display: none; }
+
+  /* Instrument */
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; min-width: 0; }
+  .label { font: 500 11px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+  .instrument { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); gap: 20px 28px; align-items: center; }
+  .reading .big { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .reading .num { font: 700 clamp(84px, 14vw, 128px)/0.82 var(--font-display); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .reading .unit { font: 600 clamp(24px, 4vw, 32px) var(--font-display); color: var(--muted); }
+  .beaufort { margin: 10px 0 0; font-weight: 600; }
+  .beaufort span { font: 500 12px var(--font-mono); color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .gustbox .num { font: 700 clamp(52px, 8vw, 72px)/0.9 var(--font-display); color: var(--gust); font-variant-numeric: tabular-nums; }
+  .gustbox .unit { font: 600 20px var(--font-display); color: var(--muted); margin-left: 6px; }
+  .gustbox .note { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .dirbox { display: flex; gap: 14px; align-items: center; }
+  .compass { width: clamp(104px, 18vw, 136px); height: auto; flex: none; }
+  .compass .ring { fill: none; stroke: var(--line); stroke-width: 2; }
+  .compass .tick { stroke: var(--line); stroke-width: 2; }
+  .compass .tick.major { stroke: var(--muted); }
+  .compass text { fill: var(--muted); font: 500 10px var(--font-mono); text-anchor: middle; dominant-baseline: central; }
+  .compass .needle { fill: var(--wind); transform-origin: 60px 60px; transition: transform .6s ease; }
+  .dirtext .num { font: 700 44px/1 var(--font-display); }
+  .dirtext .deg { font: 13px var(--font-mono); color: var(--muted); }
+  .dirtext .toward { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+  .empty { margin: 0; color: var(--muted); }
+
+  /* Graphique */
+  .chart-head { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { font: 500 13px var(--font-body); padding: 7px 12px; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--line); }
+  .seg button[aria-pressed="true"] { background: var(--wind); color: var(--surface); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  .legend i { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px; border-top: 3px solid var(--wind); }
+  .legend i.g { border-top: 2px dashed var(--gust); }
+  .plot { position: relative; width: 100%; }
+  .plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
+  .plot text { fill: var(--muted); font: 11px var(--font-mono); }
+  .plot .grid { stroke: var(--line); stroke-width: 1; }
+  .plot .axis { stroke: var(--muted); stroke-width: 1; }
+  .plot .wind { fill: none; stroke: var(--wind); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+  .plot .area { fill: var(--wind); opacity: .13; }
+  .plot .gust { fill: none; stroke: var(--gust); stroke-width: 1.8; stroke-dasharray: 5 4; stroke-linejoin: round; }
+  .plot .pt-w { fill: var(--wind); }
+  .plot .pt-g { fill: var(--gust); }
+  .plot .arrow { fill: var(--muted); }
+  .plot .cursor { stroke: var(--ink); stroke-width: 1; opacity: .5; }
+  .tip { position: absolute; pointer-events: none; background: var(--ink); color: var(--surface); border-radius: 8px; padding: 8px 10px; font: 12px/1.45 var(--font-mono); white-space: nowrap; z-index: 2; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  .tip[hidden] { display: none; }
+  .tip b { font-weight: 500; }
+  .caption { color: var(--muted); font-size: 12.5px; margin: 8px 0 0; }
+  .summary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .summary dt { font: 500 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .summary dd { margin: 2px 0 0; font: 600 22px var(--font-display); font-variant-numeric: tabular-nums; }
+  .summary dd small { font: 12px var(--font-mono); color: var(--muted); font-weight: 400; }
+
+  /* Mesures annexes */
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .tile .v { font: 700 34px/1.05 var(--font-display); font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .tile .v small { font: 600 18px var(--font-display); color: var(--muted); margin-left: 3px; }
+  .tile .s { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+
+  footer { color: var(--muted); font-size: 12.5px; display: grid; gap: 4px; }
+  footer a { color: inherit; }
+
+  @media (max-width: 860px) {
+    .instrument { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .reading { grid-column: 1 / -1; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @media (max-width: 520px) {
+    .instrument { grid-template-columns: minmax(0, 1fr); }
+    .summary { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .card { padding: 14px; }
+  }
+  .daynav { display: flex; justify-content: center; margin: 2px 0 10px; }
+  .daynav button:disabled { opacity: 1; cursor: default; min-width: 9.5em; }
+  .daynav button[disabled]:not(#dayLabel), .daynav button.off { opacity: .35; cursor: default; }
+  @media (prefers-reduced-motion: reduce) { .compass .needle { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Vent Nakutakoin</h1>
+      <p class="where" id="where">Dumbéa · station Météo-France 98805004</p>
+    </div>
+    <div class="status" id="status" data-state="none" role="status" aria-live="polite"><span class="dot"></span><span id="statusText">Chargement…</span></div>
+  </header>
+
+  <div class="banner" id="banner" hidden></div>
+
+  <section class="card" aria-label="Dernier relevé">
+    <div class="instrument" id="instrument">
+      <p class="empty">Chargement du dernier relevé…</p>
+    </div>
+  </section>
+
+  <section class="card" aria-label="Historique du vent">
+    <div class="chart-head">
+      <div class="seg" role="group" aria-label="Période affichée" id="rangeSeg"></div>
+      <div class="seg" role="group" aria-label="Unité de vitesse" id="unitSeg"></div>
+    </div>
+    <div class="daynav" id="dayNav" hidden>
+      <div class="seg" role="group" aria-label="Choisir le jour">
+        <button type="button" id="dayPrev" aria-label="Jour précédent">‹</button>
+        <button type="button" id="dayLabel" aria-pressed="true" disabled></button>
+        <button type="button" id="dayNext" aria-label="Jour suivant">›</button>
+      </div>
+    </div>
+    <div class="legend"><span><i></i>Vent</span><span><i class="g"></i>Rafales</span><span>Flèches : sens vers lequel souffle le vent</span></div>
+    <div class="plot" id="plot"><div class="tip" id="tip" hidden></div></div>
+    <p class="caption" id="caption"></p>
+    <dl class="summary" id="summary"></dl>
+  </section>
+
+  <section class="tiles" id="tiles" aria-label="Autres mesures"></section>
+
+  <footer>
+    <span id="source">Source : Météo-France, Licence Ouverte 2.0.</span>
+    <span>Les relevés sont enregistrés toutes les 6 minutes environ. L'heure affichée est celle de la Nouvelle-Calédonie.</span>
+  </footer>
+</div>
+
+<script>
+"use strict";
+// Adresse du programme Cloudflare qui fournit les relevés
+const API = "https://vent-nakutakoin.jacques-lorella.workers.dev";
+
+const TZ = "Pacific/Noumea";
+const TZ_OFFSET_MS = 11 * 3600e3; // la Nouvelle-Calédonie reste à UTC+11 toute l'année
+const UNITS = {
+  nd:  { label: "nd",   name: "nœuds", k: 1.943844, dec: 1 },
+  kmh: { label: "km/h", name: "km/h",  k: 3.6,      dec: 0 },
+  ms:  { label: "m/s",  name: "m/s",   k: 1,        dec: 1 },
+};
+const RANGES = [
+  { h: 0,   label: "Journée" }, // de minuit à minuit, heure de Nouvelle-Calédonie
+  { h: 6,   label: "6 h" },
+  { h: 24,  label: "24 h" },
+  { h: 72,  label: "3 jours" },
+  { h: 168, label: "7 jours" },
+];
+const DIR16 = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSO","SO","OSO","O","ONO","NO","NNO"];
+const BEAUFORT = [
+  [0.3, "Calme"], [1.6, "Très légère brise"], [3.4, "Légère brise"], [5.5, "Petite brise"], [8.0, "Jolie brise"],
+  [10.8, "Bonne brise"], [13.9, "Vent frais"], [17.2, "Grand frais"], [20.8, "Coup de vent"],
+  [24.5, "Fort coup de vent"], [28.5, "Tempête"], [32.7, "Violente tempête"], [Infinity, "Ouragan"],
+];
+
+const $ = (s) => document.querySelector(s);
+const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
+const svgEl = (tag, attrs, text) => { const n = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; return n; };
+
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+};
+
+const state = {
+  unit: UNITS[store.get("unit", "nd")] ? store.get("unit", "nd") : "nd",
+  hours: RANGES.some((r) => r.h === store.get("hours", 0)) ? store.get("hours", 0) : 0,
+  dayOffset: 0, // 0 = aujourd'hui, 1 = hier, … jusqu'à 6
+  latest: null,
+  history: [],
+  failed: false,
+};
+
+// ---------- Fonctions de calcul ----------
+const dec = (n, d) => n.toFixed(d).replace(".", ",");
+const toUnit = (ms) => ms * UNITS[state.unit].k;
+function fmtSpeed(ms) {
+  const u = UNITS[state.unit], v = ms * u.k;
+  return dec(u.dec === 1 && v >= 10 ? Math.round(v) : v, u.dec === 1 && v >= 10 ? 0 : u.dec);
+}
+function beaufort(ms) { for (let i = 0; i < BEAUFORT.length; i++) if (ms < BEAUFORT[i][0]) return { force: i, name: BEAUFORT[i][1] }; return { force: 12, name: "Ouragan" }; }
+function dirLabel(deg) { return DIR16[Math.round((((deg % 360) + 360) % 360) / 22.5) % 16]; }
+const kToC = (k) => k - 273.15;
+const timeFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, hour: "2-digit", minute: "2-digit" });
+const timeSecFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const dayFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, weekday: "short", day: "numeric", month: "short" });
+const wdHourFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, weekday: "short", hour: "2-digit", minute: "2-digit" });
+function ago(min) {
+  if (min < 1.5) return "à l'instant";
+  if (min < 90) return "il y a " + Math.round(min) + " min";
+  const h = Math.floor(min / 60), m = Math.round(min % 60);
+  if (h < 48) return "il y a " + h + " h" + (m ? " " + String(m).padStart(2, "0") : "");
+  return "il y a " + Math.round(h / 24) + " j";
+}
+function circularMean(points) { // points : { deg, w }
+  let x = 0, y = 0;
+  for (const p of points) { const a = p.deg * Math.PI / 180; x += Math.sin(a) * p.w; y += Math.cos(a) * p.w; }
+  if (Math.abs(x) + Math.abs(y) < 1e-9) return null;
+  return ((Math.atan2(x, y) * 180 / Math.PI) + 360) % 360;
+}
+const num = (v) => (typeof v === "number" && isFinite(v)) ? v : null;
+const tMs = (o) => Date.parse(o.validity_time);
+
+// ---------- Récupération des données ----------
+async function getJson(path) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 12000);
+  try {
+    const r = await fetch(API + path, { signal: ctl.signal });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return await r.json();
+  } finally { clearTimeout(timer); }
+}
+async function refreshLatest() {
+  try { state.latest = await getJson("/latest"); state.failed = false; }
+  catch (e) { state.failed = true; }
+  renderStatus(); renderInstrument(); renderTiles();
+}
+const isDay = () => state.hours === 0;
+// Minuit local (Nouvelle-Calédonie) du jour affiché, en millisecondes UTC
+function dayStartMs() {
+  const localNow = Date.now() + TZ_OFFSET_MS;
+  return Math.floor(localNow / 86400000) * 86400000 - TZ_OFFSET_MS - state.dayOffset * 86400000;
+}
+const rangeLabel = () => isDay() ? (state.dayOffset === 0 ? "aujourd'hui" : dayFmt.format(dayStartMs() + 12 * 3600e3)) : RANGES.find((r) => r.h === state.hours).label;
+async function refreshHistory() {
+  try {
+    let hours = state.hours;
+    if (isDay()) hours = Math.min(168, Math.ceil((Date.now() - dayStartMs()) / 3600e3) + 1);
+    const j = await getJson("/history?hours=" + hours);
+    let rows = (j.observations || []).filter((o) => o && o.validity_time && !isNaN(tMs(o)));
+    if (isDay()) { const a = dayStartMs(), b = a + 86400000; rows = rows.filter((o) => tMs(o) >= a && tMs(o) < b); }
+    state.history = rows;
+    state.failed = false;
+  } catch (e) { state.failed = true; }
+  renderStatus(); renderChart(); renderTiles(); renderDayNav();
+}
+function renderDayNav() {
+  $("#dayNav").hidden = !isDay();
+  if (!isDay()) return;
+  const lab = $("#dayLabel"), prev = $("#dayPrev"), next = $("#dayNext");
+  lab.textContent = state.dayOffset === 0 ? "Aujourd'hui" : state.dayOffset === 1 ? "Hier" : dayFmt.format(dayStartMs() + 12 * 3600e3);
+  prev.classList.toggle("off", state.dayOffset >= 6); next.classList.toggle("off", state.dayOffset <= 0);
+}
+
+// ---------- Affichage : bandeau et instrument ----------
+function renderStatus() {
+  const st = $("#status"), tx = $("#statusText"), bn = $("#banner");
+  const obs = state.latest && state.latest.observation;
+  bn.hidden = true;
+  if (state.latest && state.latest.station) {
+    const s = state.latest.station;
+    $("#where").textContent = s.name.replace(/ \(.*/, "") + " · " + s.name.replace(/^.*\(|\)$/g, "") + " · altitude " + s.alt + " m · station Météo-France " + s.id;
+    if (state.latest.source) $("#source").textContent = "Source : " + state.latest.source + ".";
+  }
+  if (!obs) {
+    st.dataset.state = "none";
+    tx.textContent = state.failed ? "Serveur injoignable" : "En attente du premier relevé";
+    if (state.failed) { bn.textContent = "Impossible de joindre le serveur de données. Nouvel essai dans quelques minutes."; bn.hidden = false; }
+    return;
+  }
+  const age = (Date.now() - tMs(obs)) / 60000;
+  st.dataset.state = age <= 20 ? "fresh" : age <= 60 ? "late" : "old";
+  tx.textContent = "Relevé de " + timeFmt.format(tMs(obs)) + " · " + ago(age);
+  const c = state.latest.collector;
+  if (state.failed) { bn.textContent = "Mise à jour impossible pour le moment. Les dernières valeurs connues restent affichées."; bn.hidden = false; }
+  else if (age > 60) { bn.textContent = "Le dernier relevé date de " + ago(age).replace("il y a ", "") + ". La station ou la collecte semble interrompue."; bn.hidden = false; }
+  else if (age > 20) { bn.textContent = "Relevé en retard : le dernier a plus de 20 minutes."; bn.hidden = false; }
+  else if (c && c.ok === false) { bn.textContent = "La dernière collecte a échoué (" + c.error + "). Les valeurs affichées sont celles du relevé précédent."; bn.hidden = false; }
+}
+
+function compassSvg() {
+  const svg = svgEl("svg", { viewBox: "0 0 120 120", class: "compass", role: "img", id: "compass" });
+  svg.appendChild(svgEl("circle", { cx: 60, cy: 60, r: 50, class: "ring" }));
+  for (let i = 0; i < 16; i++) {
+    const a = i * 22.5 * Math.PI / 180, major = i % 4 === 0, r1 = major ? 43 : 46.5;
+    svg.appendChild(svgEl("line", { x1: 60 + Math.sin(a) * r1, y1: 60 - Math.cos(a) * r1, x2: 60 + Math.sin(a) * 50, y2: 60 - Math.cos(a) * 50, class: "tick" + (major ? " major" : "") }));
+  }
+  svg.appendChild(svgEl("text", { x: 60, y: 31 }, "N")); svg.appendChild(svgEl("text", { x: 89, y: 60 }, "E"));
+  svg.appendChild(svgEl("text", { x: 60, y: 89 }, "S")); svg.appendChild(svgEl("text", { x: 31, y: 60 }, "O"));
+  svg.appendChild(svgEl("path", { d: "M60 20 L69 64 L60 56 L51 64 Z", class: "needle", id: "needle" }));
+  return svg;
+}
+
+function renderInstrument() {
+  const box = $("#instrument");
+  const obs = state.latest && state.latest.observation;
+  if (!obs || num(obs.ff) == null) {
+    box.textContent = "";
+    box.appendChild(el("p", "empty", state.failed ? "Aucune donnée disponible pour le moment." : "Aucun relevé enregistré pour l'instant. Il apparaîtra dès le prochain passage de la collecte."));
+    return;
+  }
+  const u = UNITS[state.unit], bf = beaufort(obs.ff);
+  box.textContent = "";
+
+  const reading = el("div", "reading");
+  reading.appendChild(el("div", "label", "Vent"));
+  const big = el("div", "big"); big.appendChild(el("span", "num", fmtSpeed(obs.ff))); big.appendChild(el("span", "unit", u.label));
+  reading.appendChild(big);
+  const b = el("p", "beaufort", bf.name); b.appendChild(el("span", null, "force " + bf.force + " Beaufort")); reading.appendChild(b);
+  box.appendChild(reading);
+
+  const gust = el("div", "gustbox");
+  gust.appendChild(el("div", "label", "Rafales"));
+  if (num(obs.raf10) != null) {
+    const g = el("div"); g.appendChild(el("span", "num", fmtSpeed(obs.raf10))); g.appendChild(el("span", "unit", u.label)); gust.appendChild(g);
+    const ratio = obs.ff > 0.3 ? obs.raf10 / obs.ff : null;
+    gust.appendChild(el("p", "note", ratio ? "Soit " + dec(ratio, 1) + " fois le vent moyen" : "Pas de vent établi"));
+  } else gust.appendChild(el("p", "empty", "Non mesurées"));
+  box.appendChild(gust);
+
+  const dir = el("div", "dirbox");
+  const cs = compassSvg(); dir.appendChild(cs);
+  const dt = el("div", "dirtext");
+  dt.appendChild(el("div", "label", "Vent de"));
+  if (num(obs.dd) != null) {
+    dt.appendChild(el("div", "num", dirLabel(obs.dd)));
+    dt.appendChild(el("div", "deg", Math.round(obs.dd) + "°"));
+    dt.appendChild(el("p", "toward", "Souffle vers le " + dirLabel(obs.dd + 180)));
+    cs.setAttribute("aria-label", "Vent de " + dirLabel(obs.dd) + ", " + Math.round(obs.dd) + " degrés");
+    cs.querySelector("#needle").style.transform = "rotate(" + (obs.dd + 180) + "deg)";
+  } else { dt.appendChild(el("p", "empty", "Direction non mesurée")); cs.querySelector("#needle").remove(); }
+  dir.appendChild(dt);
+  box.appendChild(dir);
+}
+
+// ---------- Mesures annexes ----------
+function renderTiles() {
+  const box = $("#tiles"); box.textContent = "";
+  const obs = state.latest && state.latest.observation;
+  const add = (label, value, unit, sub) => {
+    const t = el("div", "tile"); t.appendChild(el("div", "label", label));
+    const v = el("div", "v", value); if (unit) v.appendChild(el("small", null, unit)); t.appendChild(v);
+    if (sub) t.appendChild(el("div", "s", sub)); box.appendChild(t);
+  };
+  if (!obs) return;
+  if (num(obs.t) != null) add("Température", dec(kToC(obs.t), 1), "°C", num(obs.td) != null ? "Point de rosée " + dec(kToC(obs.td), 1) + " °C" : "");
+  if (num(obs.u) != null) add("Humidité", String(Math.round(obs.u)), "%", "");
+  const rain = state.history.reduce((s, o) => s + (num(o.rr_per) || 0), 0);
+  if (state.history.length) add("Pluie", dec(rain, 1), "mm", isDay() ? "Cumul " + (state.dayOffset === 0 ? "depuis minuit" : "du " + rangeLabel()) : "Cumul sur " + rangeLabel());
+  if (num(obs.rr_per) != null) add("Pluie, dernier relevé", dec(obs.rr_per, 1), "mm", "Sur 6 minutes");
+}
+
+// ---------- Graphique ----------
+function niceStep(max) {
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / mag;
+  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
+}
+const STEPS = [1800e3, 3600e3, 2 * 3600e3, 3 * 3600e3, 6 * 3600e3, 12 * 3600e3, 24 * 3600e3];
+// Plus petit pas qui laisse au moins minPx pixels entre deux repères
+function pickStep(spanMs, plotW, minPx) {
+  const need = spanMs / Math.max(2, Math.floor(plotW / minPx));
+  return STEPS.find((c) => c >= need) || STEPS[STEPS.length - 1];
+}
+const wdFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, weekday: "short" });
+const wdDayFmt = new Intl.DateTimeFormat("fr", { timeZone: TZ, weekday: "short", day: "numeric" });
+function hourLabel(t) { // heure locale de Nouvelle-Calédonie, par exemple 15h ou 14h30
+  const local = t + TZ_OFFSET_MS, h = Math.floor((local % 86400000) / 3600000), mn = Math.floor((local % 3600000) / 60000);
+  return h + "h" + (mn ? String(mn).padStart(2, "0") : "");
+}
+function tickLabel(t, step, spanMs) {
+  if (step >= 24 * 3600e3) return wdDayFmt.format(t);
+  return (spanMs > 30 * 3600e3 ? wdFmt.format(t) + " " : "") + hourLabel(t);
+}
+
+function renderChart() {
+  const host = $("#plot");
+  const old = host.querySelector("svg"); if (old) old.remove();
+  const W = Math.max(300, Math.round(host.clientWidth)), H = W < 520 ? 270 : 330;
+  const m = { l: 46, r: 12, t: 12, b: 58 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const day = isDay();
+  const end = day ? dayStartMs() + 86400000 : Date.now(), rangeStart = day ? dayStartMs() : end - state.hours * 3600e3;
+  const pts = state.history.filter((o) => tMs(o) >= rangeStart - 60000);
+  let start = rangeStart;
+  if (pts.length && !day) { // historique encore court : on resserre la fenêtre sur les relevés existants
+    const firstT = Math.min(...pts.map(tMs));
+    if (end - firstT < 0.5 * (end - rangeStart)) start = Math.min(firstT - 10 * 60000, end - 3600e3);
+  }
+  const span = end - start;
+  const u = UNITS[state.unit];
+  const svg = svgEl("svg", { viewBox: "0 0 " + W + " " + H, role: "img", "aria-label": "Courbe du vent et des rafales : " + rangeLabel() });
+  host.insertBefore(svg, $("#tip"));
+
+  const x = (t) => m.l + (t - start) / (end - start) * pw;
+  let ymax = 1;
+  for (const o of pts) { if (num(o.ff) != null) ymax = Math.max(ymax, o.ff * u.k); if (num(o.raf10) != null) ymax = Math.max(ymax, o.raf10 * u.k); }
+  const step = niceStep(ymax * 1.08), top = Math.ceil(ymax * 1.08 / step) * step;
+  const y = (v) => m.t + ph - v / top * ph;
+
+  for (let v = 0; v <= top + 1e-9; v += step) {
+    svg.appendChild(svgEl("line", { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: v === 0 ? "axis" : "grid" }));
+    svg.appendChild(svgEl("text", { x: m.l - 8, y: y(v) + 4, "text-anchor": "end" }, String(Math.round(v * 10) / 10).replace(".", ",")));
+  }
+  svg.appendChild(svgEl("text", { x: 4, y: 10 }, u.label));
+
+  const ts = pickStep(span, pw, 64), first = Math.ceil((start + TZ_OFFSET_MS) / ts) * ts - TZ_OFFSET_MS;
+  if (day && state.dayOffset === 0) { // repère « maintenant »
+    const nx = x(Date.now());
+    svg.appendChild(svgEl("line", { x1: nx, x2: nx, y1: m.t, y2: m.t + ph, class: "grid", "stroke-dasharray": "3 3" }));
+  }
+  for (let t = first; t <= end; t += ts) {
+    const xx = x(t);
+    svg.appendChild(svgEl("line", { x1: xx, x2: xx, y1: m.t, y2: m.t + ph, class: "grid" }));
+    const anchor = xx < m.l + 18 ? "start" : xx > W - m.r - 18 ? "end" : "middle";
+    svg.appendChild(svgEl("text", { x: xx, y: m.t + ph + 16, "text-anchor": anchor }, tickLabel(t, ts, span)));
+  }
+
+  // Lignes : on coupe quand deux relevés sont séparés de plus de 20 minutes
+  const GAP = 20 * 60000;
+  const series = (key) => {
+    const runs = []; let run = [];
+    for (const o of pts) {
+      const v = num(o[key]); if (v == null) { if (run.length) { runs.push(run); run = []; } continue; }
+      if (run.length && tMs(o) - run[run.length - 1].t > GAP) { runs.push(run); run = []; }
+      run.push({ t: tMs(o), v: v * u.k });
+    }
+    if (run.length) runs.push(run);
+    return runs;
+  };
+  const draw = (runs, cls, dotCls, area) => {
+    for (const r of runs) {
+      if (r.length === 1) { svg.appendChild(svgEl("circle", { cx: x(r[0].t), cy: y(r[0].v), r: 3, class: dotCls })); continue; }
+      const d = r.map((p, i) => (i ? "L" : "M") + x(p.t).toFixed(1) + " " + y(p.v).toFixed(1)).join(" ");
+      if (area) svg.appendChild(svgEl("path", { d: d + " L" + x(r[r.length - 1].t).toFixed(1) + " " + y(0) + " L" + x(r[0].t).toFixed(1) + " " + y(0) + " Z", class: "area" }));
+      svg.appendChild(svgEl("path", { d, class: cls }));
+    }
+  };
+  draw(series("raf10"), "gust", "pt-g", false);
+  draw(series("ff"), "wind", "pt-w", true);
+
+  // Bande des directions
+  const as = pickStep(span, pw, 30), af = Math.ceil((start + TZ_OFFSET_MS) / as) * as - TZ_OFFSET_MS;
+  const by = m.t + ph + 40;
+  for (let t = af; t <= end; t += as) {
+    let best = null, bd = 12 * 60000;
+    for (const o of pts) { const d = Math.abs(tMs(o) - t); if (d < bd && num(o.dd) != null) { bd = d; best = o; } }
+    if (!best) continue;
+    const g = svgEl("path", { d: "M0 -7 L4.5 6 L0 3 L-4.5 6 Z", class: "arrow", transform: "translate(" + x(t).toFixed(1) + " " + by + ") rotate(" + (best.dd + 180) + ")" });
+    svg.appendChild(g);
+  }
+
+  // Curseur
+  const cur = svgEl("line", { y1: m.t, y2: m.t + ph, class: "cursor", visibility: "hidden" });
+  const cw = svgEl("circle", { r: 4, class: "pt-w", visibility: "hidden" });
+  const cg = svgEl("circle", { r: 4, class: "pt-g", visibility: "hidden" });
+  svg.append(cur, cw, cg);
+  const tip = $("#tip");
+  const hide = () => { cur.setAttribute("visibility", "hidden"); cw.setAttribute("visibility", "hidden"); cg.setAttribute("visibility", "hidden"); tip.hidden = true; };
+  svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("pointermove", (ev) => {
+    if (!pts.length) return;
+    const rect = svg.getBoundingClientRect(), px = (ev.clientX - rect.left) * (W / rect.width), t = start + (px - m.l) / pw * (end - start);
+    let best = null, bd = Infinity;
+    for (const o of pts) { const d = Math.abs(tMs(o) - t); if (d < bd) { bd = d; best = o; } }
+    if (!best || bd > Math.max(15 * 60000, (end - start) / 60) || px < m.l || px > W - m.r) { hide(); return; }
+    const bx = x(tMs(best));
+    cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.setAttribute("visibility", "visible");
+    if (num(best.ff) != null) { cw.setAttribute("cx", bx); cw.setAttribute("cy", y(best.ff * u.k)); cw.setAttribute("visibility", "visible"); } else cw.setAttribute("visibility", "hidden");
+    if (num(best.raf10) != null) { cg.setAttribute("cx", bx); cg.setAttribute("cy", y(best.raf10 * u.k)); cg.setAttribute("visibility", "visible"); } else cg.setAttribute("visibility", "hidden");
+    tip.textContent = "";
+    tip.appendChild(el("b", null, (state.hours > 24 || day ? dayFmt.format(tMs(best)) + " " : "") + timeFmt.format(tMs(best)).replace(":", "h")));
+    const line = (a, b) => { tip.appendChild(document.createElement("br")); tip.appendChild(document.createTextNode(a + " ")); tip.appendChild(el("b", null, b)); };
+    if (num(best.ff) != null) line("Vent", fmtSpeed(best.ff) + " " + u.label);
+    if (num(best.raf10) != null) line("Rafales", fmtSpeed(best.raf10) + " " + u.label);
+    if (num(best.dd) != null) line("Direction", dirLabel(best.dd) + " " + Math.round(best.dd) + "°");
+    if (num(best.t) != null) line("Température", dec(kToC(best.t), 1) + " °C");
+    tip.hidden = false;
+    const tw = tip.offsetWidth, left = Math.min(Math.max(bx / W * rect.width + 12, 0), rect.width - tw);
+    tip.style.left = left + "px"; tip.style.top = "8px";
+  });
+
+  renderCaption(pts, rangeStart); renderSummary(pts);
+}
+
+function renderCaption(pts, start) {
+  const c = $("#caption");
+  if (!pts.length) { c.textContent = isDay() ? "Aucun relevé enregistré pour ce jour." : "Aucun relevé sur cette période. L'historique se construit au fil de la collecte."; return; }
+  const firstT = Math.min(...pts.map(tMs));
+  if (isDay()) { c.textContent = "Journée du " + dayFmt.format(start + 12 * 3600e3) + " de 0h à 24h (heure de Nouvelle-Calédonie) : " + pts.length + " relevés."; return; }
+  if (firstT > start + 45 * 60000) c.textContent = "L'historique est en cours de constitution : le premier relevé enregistré date du " + dayFmt.format(firstT) + " à " + timeFmt.format(firstT).replace(":", "h") + ".";
+  else c.textContent = pts.length + " relevés sur cette période.";
+}
+
+function renderSummary(pts) {
+  const dl = $("#summary"); dl.textContent = "";
+  const ws = pts.filter((o) => num(o.ff) != null);
+  if (!ws.length) return;
+  const add = (k, v, small) => { const d = el("div"); d.appendChild(el("dt", null, k)); const dd = el("dd", null, v); if (small) dd.appendChild(el("small", null, " " + small)); d.appendChild(dd); dl.appendChild(d); };
+  const u = UNITS[state.unit];
+  const avg = ws.reduce((s, o) => s + o.ff, 0) / ws.length;
+  add("Vent moyen", fmtSpeed(avg) + " " + u.label);
+  const gs = pts.filter((o) => num(o.raf10) != null);
+  if (gs.length) { const g = gs.reduce((a, o) => (o.raf10 > a.raf10 ? o : a)); add("Rafale maximale", fmtSpeed(g.raf10) + " " + u.label, "à " + (state.hours > 24 && !isDay() ? dayFmt.format(tMs(g)) + " " : "") + timeFmt.format(tMs(g)).replace(":", "h")); }
+  const dm = circularMean(ws.filter((o) => num(o.dd) != null).map((o) => ({ deg: o.dd, w: o.ff })));
+  if (dm != null) add("Direction dominante", dirLabel(dm), Math.round(dm) + "°");
+}
+
+// ---------- Commandes ----------
+function buildControls() {
+  const rs = $("#rangeSeg"), us = $("#unitSeg");
+  RANGES.forEach((r) => {
+    const b = el("button", null, r.label); b.type = "button"; b.dataset.h = r.h; b.setAttribute("aria-pressed", String(r.h === state.hours));
+    b.addEventListener("click", () => { state.hours = r.h; state.dayOffset = 0; store.set("hours", r.h); rs.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); refreshHistory(); });
+    rs.appendChild(b);
+  });
+  $("#dayPrev").addEventListener("click", () => { if (state.dayOffset < 6) { state.dayOffset++; refreshHistory(); } });
+  $("#dayNext").addEventListener("click", () => { if (state.dayOffset > 0) { state.dayOffset--; refreshHistory(); } });
+  Object.keys(UNITS).forEach((k) => {
+    const b = el("button", null, UNITS[k].label); b.type = "button"; b.setAttribute("aria-pressed", String(k === state.unit));
+    b.addEventListener("click", () => { state.unit = k; store.set("unit", k); us.querySelectorAll("button").forEach((x) => x.setAttribute("aria-pressed", String(x === b))); renderInstrument(); renderChart(); });
+    us.appendChild(b);
+  });
+}
+
+buildControls();
+refreshLatest(); refreshHistory();
+setInterval(refreshLatest, 120000);
+setInterval(refreshHistory, 360000);
+setInterval(renderStatus, 30000);
+let rz; window.addEventListener("resize", () => { clearTimeout(rz); rz = setTimeout(renderChart, 150); });
+</script>
+</body>
+</html>
