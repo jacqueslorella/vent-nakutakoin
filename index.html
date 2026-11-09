@@ -109,6 +109,8 @@
   .legend i { display: inline-block; width: 22px; height: 0; vertical-align: middle; margin-right: 6px; border-top: 3px solid var(--wind); }
   .legend i.g { border-top: 2px dashed var(--gust); }
   .plot { position: relative; width: 100%; }
+  .instrument.scrub .reading .label { color: var(--wind); }
+  .instrument.scrub { transition: none; }
   .plot svg { display: block; width: 100%; height: auto; touch-action: pan-y; }
   .plot text { fill: var(--muted); font: 11px var(--font-mono); }
   .plot .grid { stroke: var(--line); stroke-width: 1; }
@@ -237,6 +239,8 @@ const store = {
 const state = {
   unit: UNITS[store.get("unit", "nd")] ? store.get("unit", "nd") : "nd",
   hours: RANGES.some((r) => r.h === store.get("hours", 0)) ? store.get("hours", 0) : 0,
+  hover: null,  // relevé survolé sur le graphique (null = on affiche le dernier relevé)
+  needleDeg: null,
   dayOffset: 0, // 0 = aujourd'hui, 1 = hier, … jusqu'à 6
   latest: null,
   history: [],
@@ -356,7 +360,9 @@ function compassSvg() {
 
 function renderInstrument() {
   const box = $("#instrument");
-  const obs = state.latest && state.latest.observation;
+  const live = state.latest && state.latest.observation;
+  const obs = state.hover || live;
+  box.classList.toggle("scrub", !!state.hover);
   if (!obs || num(obs.ff) == null) {
     box.textContent = "";
     box.appendChild(el("p", "empty", state.failed ? "Aucune donnée disponible pour le moment." : "Aucun relevé enregistré pour l'instant. Il apparaîtra dès le prochain passage de la collecte."));
@@ -366,7 +372,7 @@ function renderInstrument() {
   box.textContent = "";
 
   const reading = el("div", "reading");
-  reading.appendChild(el("div", "label", "Vent"));
+  reading.appendChild(el("div", "label", state.hover ? "Vent · " + (isDay() ? "" : dayFmt.format(tMs(obs)) + " ") + timeFmt.format(tMs(obs)).replace(":", "h") : "Vent"));
   const big = el("div", "big"); big.appendChild(el("span", "num", fmtSpeed(obs.ff))); big.appendChild(el("span", "unit", u.label));
   reading.appendChild(big);
   const b = el("p", "beaufort", bf.name); b.appendChild(el("span", null, "force " + bf.force + " Beaufort")); reading.appendChild(b);
@@ -390,7 +396,12 @@ function renderInstrument() {
     dt.appendChild(el("div", "deg", Math.round(obs.dd) + "°"));
     dt.appendChild(el("p", "toward", "Souffle vers le " + dirLabel(obs.dd + 180)));
     cs.setAttribute("aria-label", "Vent de " + dirLabel(obs.dd) + ", " + Math.round(obs.dd) + " degrés");
-    cs.querySelector("#needle").style.transform = "rotate(" + (obs.dd + 180) + "deg)";
+    const nd = cs.querySelector("#needle"), target = obs.dd + 180;
+    if (state.needleDeg != null) { // on repart de l'angle précédent pour que l'aiguille tourne en douceur, par le plus court chemin
+      let from = state.needleDeg, diff = ((target - from + 540) % 360) - 180;
+      nd.style.transition = "none"; nd.style.transform = "rotate(" + from + "deg)"; void nd.getBoundingClientRect(); nd.style.transition = "";
+      state.needleDeg = from + diff; nd.style.transform = "rotate(" + state.needleDeg + "deg)";
+    } else { state.needleDeg = target; nd.style.transform = "rotate(" + target + "deg)"; }
   } else { dt.appendChild(el("p", "empty", "Direction non mesurée")); cs.querySelector("#needle").remove(); }
   dir.appendChild(dt);
   box.appendChild(dir);
@@ -436,6 +447,7 @@ function tickLabel(t, step, spanMs) {
 }
 
 function renderChart() {
+  if (state.hover) { state.hover = null; renderInstrument(); } // l'ancien graphique disparaît : on revient au dernier relevé
   const host = $("#plot");
   const old = host.querySelector("svg"); if (old) old.remove();
   const W = Math.max(300, Math.round(host.clientWidth)), H = W < 520 ? 270 : 330;
@@ -517,8 +529,9 @@ function renderChart() {
   const cg = svgEl("circle", { r: 4, class: "pt-g", visibility: "hidden" });
   svg.append(cur, cw, cg);
   const tip = $("#tip");
-  const hide = () => { cur.setAttribute("visibility", "hidden"); cw.setAttribute("visibility", "hidden"); cg.setAttribute("visibility", "hidden"); tip.hidden = true; };
+  const hide = () => { if (state.hover) { state.hover = null; renderInstrument(); } cur.setAttribute("visibility", "hidden"); cw.setAttribute("visibility", "hidden"); cg.setAttribute("visibility", "hidden"); tip.hidden = true; };
   svg.addEventListener("pointerleave", hide);
+  svg.addEventListener("pointercancel", hide);
   svg.addEventListener("pointermove", (ev) => {
     if (!pts.length) return;
     const rect = svg.getBoundingClientRect(), px = (ev.clientX - rect.left) * (W / rect.width), t = start + (px - m.l) / pw * (end - start);
@@ -526,6 +539,7 @@ function renderChart() {
     for (const o of pts) { const d = Math.abs(tMs(o) - t); if (d < bd) { bd = d; best = o; } }
     if (!best || bd > Math.max(15 * 60000, (end - start) / 60) || px < m.l || px > W - m.r) { hide(); return; }
     const bx = x(tMs(best));
+    if (state.hover !== best) { state.hover = best; renderInstrument(); }
     cur.setAttribute("x1", bx); cur.setAttribute("x2", bx); cur.setAttribute("visibility", "visible");
     if (num(best.ff) != null) { cw.setAttribute("cx", bx); cw.setAttribute("cy", y(best.ff * u.k)); cw.setAttribute("visibility", "visible"); } else cw.setAttribute("visibility", "hidden");
     if (num(best.raf10) != null) { cg.setAttribute("cx", bx); cg.setAttribute("cy", y(best.raf10 * u.k)); cg.setAttribute("visibility", "visible"); } else cg.setAttribute("visibility", "hidden");
